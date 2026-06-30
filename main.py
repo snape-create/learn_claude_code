@@ -1,7 +1,0 @@
-def main():
-    print("Hello from learn-claude-code!")
-
-
-if __name__ == "__main__":
-    main()
-# 测试版本回退
