@@ -12,7 +12,7 @@ from langgraph.prebuilt import ToolNode
 from langchain.tools import tool
 from operator import add
 import subprocess
-from typing import Optional,Literal
+from typing import Optional, Literal
 from dotenv import load_dotenv
 import platform
 system = platform.system()
@@ -69,19 +69,6 @@ def run_bash(command: str) -> str:
         return f"Error: {e}"
 
 
-def safe_path(path: str) -> Path:
-    """安全的获取文件地址
-
-    Args:
-        path (str): _description_
-
-    Returns:
-        str: _description_
-    """
-    file_path = (cwd / path).resolve()
-    if not file_path.is_relative_to(cwd):
-        raise ValueError(f"Path escapes workspace: {file_path}")
-    return file_path
 
 
 @tool
@@ -94,13 +81,13 @@ def run_read(path: str, limit: Optional[int]):
     Returns:
         _type_: the content of file
     """
-    path: Path = safe_path(path)
     try:
-        content = path.read_text().splitlines()
+        file_path = Path(path)
+        content = file_path.read_text().splitlines()
         if limit and len(content) > limit:
             content = content[:limit] + \
                 [f"... ({len(content) - limit} more lines)"]
-            return "\n".join(content)
+        return "\n".join(content)
     except Exception as e:
         return f"Error: {e}"
 
@@ -117,7 +104,7 @@ def run_write(path: str, content: str) -> str:
         str: _description_
     """
     try:
-        file_path = safe_path(path)
+        file_path = Path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content)
         return f"Wrote {len(content)} bytes to {path}"
@@ -138,7 +125,7 @@ def run_edit(path: str, old_text: str, new_text: str) -> str:
         str: _description_
     """
     try:
-        file_path = safe_path(path)
+        file_path = Path(path)
         text = file_path.read_text()
         if old_text not in text:
             return f"Error: text not found in {path}"
@@ -169,7 +156,6 @@ def run_glob(pattern: str) -> str:
         return f"Error: {e}"
 
 
-TOOLS = [run_bash,run_read,run_write,run_glob,run_edit]
 DENY_LIST = [
     "rm -rf /", "sudo", "shutdown", "reboot", "> /dev/",
     "format", "diskpart", "del /f /s /q", "rd /s /q",
@@ -188,8 +174,8 @@ def check_deny_list(command: str) -> Optional[str]:
 
 
 PERMISSION_RULES = [
-    {'tools': ['write_file', 'edit_file'],
-     'check': lambda args: not (cwd / args.get('command', '')).resolve().is_relative_to(cwd),
+    {'tools': ['run_write','run_read','run_edit'],
+     'check': lambda args: not (cwd / args.get('path', '')).resolve().is_relative_to(cwd),
      'message': "Writing outside workspace"},
     {'tools': ['bash'],
      'check': lambda args: any(kw in args.get("command", "") for kw in ["rm ", "> /etc/", "chmod 777"]),
@@ -214,7 +200,7 @@ def ask_user(tool_name: str, args: dict, reason: str) -> str:
     return "allow" if choice in ("y", "yes") else "deny"
 
 
-TOOLS = [run_bash, run_read, run_write, run_glob, run_edit]
+TOOLS = [ run_read, run_write, run_glob, run_edit]
 llm_with_tools = llm.bind_tools(tools=TOOLS)
 
 
@@ -250,9 +236,9 @@ class PermissionToolNode(ToolNode):
         name = tool_call.get('name', '')
         args = tool_call.get('args', {}) or {}
         tool_call_id = tool_call.get('id', '')
-        
+
         print(f"\033[36m> {name}\033[0m")
-        
+
         reason = check_permission(name, args)
         if reason:
             print(f"\033[31m⛔ {name}: {reason}\033[0m")
@@ -260,27 +246,13 @@ class PermissionToolNode(ToolNode):
                 content=f"Permission denied: {reason}",
                 tool_call_id=tool_call_id,
             )
-        
-        return super()._run_one(tool_call, input_type, config)
+
+        result = super()._run_one(tool_call, input_type, config)
+        print(f"\033[90m[DEBUG] {name} result: {result.content[:100] if result.content else 'EMPTY'}\033[0m")
+        return result
 
 
-# def check_tools(state:State):
-#     last_message:AIMessage = state["messages"][-1]
 
-#     tool_result = []
-
-#     for tc in last_message.tool_calls:
-#         name = tc.get('name','')
-#         args = tc.get('args',{}) or {}
-#         tool_call_id = tc.get('id','')
-#         print(f"\033[36m> {tool_name}\033[0m")
-#         reason = check_permission(name,args)
-#         # 工具调用出问题
-#         if reason:
-#             tool_result.append(ToolMessage(content="Permission denied:"+ reason,tool_call_id=tool_call_id,))
-#         else:
-#             tool_result.append()
-#     return {'messages':tool_result}
 
 
 def should_continue(state: State):
@@ -292,15 +264,15 @@ def should_continue(state: State):
 
 workflow = StateGraph(State)
 workflow.add_node("agent", call_model)
-workflow.add_node('tools',PermissionToolNode(TOOLS))
+workflow.add_node('tools', PermissionToolNode(TOOLS))
 
 workflow.add_edge(START, "agent")
 workflow.add_conditional_edges(
     "agent",
     should_continue,
-    {'tools':"tools",END:END}
+    {'tools': "tools", END: END}
 )
-workflow.add_edge('tools','agent')
+workflow.add_edge('tools', 'agent')
 
 graph = workflow.compile(checkpointer=checkpointer)
 
