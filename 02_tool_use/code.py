@@ -89,7 +89,7 @@ def run_read(path:str,limit:Optional[int]):
         content = path.read_text().splitlines()
         if limit and len(content) > limit:
             content = content[:limit] + [f"... ({len(content) - limit} more lines)"]
-            return "\n".join(content)
+        return "\n".join(content)
     except Exception as e:
         return f"Error: {e}"
 @tool
