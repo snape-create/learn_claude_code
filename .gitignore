@@ -11,3 +11,5 @@ wheels/
 .env
 test/
 agents/
+skills/
+.transcripts/
